@@ -1,0 +1,152 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   原稿用紙 — genkō yōshi. Spec §7.
+   One idea, used everywhere: the manuscript square. Prompts render inside one,
+   the combo meter fills its centring cross, the collection grid is a sheet of
+   them. Nothing else is decorated.
+--------------------------------------------------------------------------- */
+
+@theme {
+  --color-paper: #edefe8;
+  --color-paper-deep: #e3e6dd;
+  --color-ink: #1a1d1a;
+  --color-ink-soft: #5a615a;
+  --color-ink-faint: #8b938a;
+  --color-rule: #b8c2b4;
+  --color-rule-soft: #d2d9cf;
+  --color-correction: #c8352b;
+  --color-mastery: #2e6e5a;
+
+  --font-mincho: 'Noto Serif JP', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  --font-gothic: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', sans-serif;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+}
+
+@font-face {
+  font-family: 'Noto Sans JP';
+  src: url('/fonts/noto-sans-jp-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Noto Serif JP';
+  src: url('/fonts/noto-serif-jp-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+/* These must live inside @layer base. Tailwind v4 puts its utilities in a
+   layer, and an unlayered rule beats every layered one regardless of
+   specificity — an unlayered `button { color: inherit }` silently defeats
+   every text-* class in the app. */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+  }
+
+  /* A phone app, and only a phone app. On anything wider the sheet is centred
+     in a phone-width column rather than stretched into a layout it has no
+     design for. */
+  #root {
+    max-width: 26rem;
+    margin-inline: auto;
+    position: relative;
+  }
+
+  button {
+    font: inherit;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* --- the manuscript square ------------------------------------------------ */
+
+/* Faint centring cross, drawn as two hairlines rather than borders so it sits
+   under the glyph and can be masked by the combo fill. */
+.genko-cross {
+  background-image:
+    linear-gradient(to right, var(--color-rule-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-rule-soft) 1px, transparent 1px);
+  background-position:
+    center,
+    center;
+  background-size:
+    1px 100%,
+    100% 1px;
+  background-repeat: no-repeat;
+}
+
+/* --- motion (spec §7: one thing only) ------------------------------------- */
+
+@keyframes ink-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes correction-flash {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+  15%,
+  60% {
+    box-shadow: inset 0 0 0 2px var(--color-correction);
+  }
+}
+
+@keyframes shudder {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+.anim-ink {
+  animation: ink-in 180ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+.anim-correction {
+  animation:
+    correction-flash 420ms ease-out both,
+    shudder 180ms ease-out both;
+}
+
+.anim-rise {
+  animation: ink-in 220ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-ink,
+  .anim-correction,
+  .anim-rise {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  * {
+    transition-duration: 1ms !important;
+  }
+}
