@@ -9,8 +9,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "data": "python3 scripts/fetch_sources.py && python3 scripts/build_data.py",
-    "fonts": "python3 scripts/build_fonts.py"
+    "data": "python3 scripts/fetch_sources.py && python3 scripts/build_data.py && python3 scripts/build_fonts.py && python3 scripts/build_etymology.py",
+    "fonts": "python3 scripts/build_fonts.py && python3 scripts/build_etymology.py",
+    "icons": "python3 scripts/build_icons.py"
   },
   "dependencies": {
     "dexie": "^4.0.11",

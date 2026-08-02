@@ -9,6 +9,7 @@
 
 import type { Corpus, Kanji } from '../data/corpus'
 import { GenkoCell } from '../components/GenkoCell'
+import { EtymologyStrip } from '../components/EtymologyStrip'
 import { faceFor } from '../cards/build'
 
 interface Props {
@@ -51,6 +52,15 @@ export function EncounterPanel({ corpus, kanji, first }: Props) {
           </dl>
         </div>
       </div>
+
+      {/* For the 75 pictographs this is the only structural thing there is to
+          say — they have no components because they are not built from
+          anything. It comes first for exactly that reason. */}
+      <EtymologyStrip
+        char={kanji.c}
+        forms={corpus.etymology[kanji.c] ?? []}
+        base={corpus.base}
+      />
 
       {kanji.comp.length > 0 && (
         <section className="border-t border-rule-soft pt-3">

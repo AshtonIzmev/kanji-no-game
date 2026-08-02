@@ -18,6 +18,7 @@
   --color-correction: #c8352b;
   --color-mastery: #2e6e5a;
 
+  --font-seal: 'KNG Seal Subset', serif;
   --font-mincho: 'Noto Serif JP', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
   --font-gothic: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', sans-serif;
   --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -38,6 +39,18 @@
   font-weight: 500;
   font-style: normal;
   font-display: block;
+}
+
+/* Small Seal Script, for the Encounter etymology strip only. Subset of LXGW
+   Seal, renamed per OFL 1.1 §4 — see scripts/build_fonts.py. `swap` rather
+   than `block`: the strip is supplementary, and a missing seal glyph must
+   never hold up a card. */
+@font-face {
+  font-family: 'KNG Seal Subset';
+  src: url('/fonts/seal.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
 /* These must live inside @layer base. Tailwind v4 puts its utilities in a
