@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dev-dist/
+*.local
+.DS_Store
+
+# Raw corpora and the upstream font binaries. Re-fetch with
+# `python3 scripts/fetch_sources.py` — the built artifacts in public/ are what
+# the app ships, and those *are* committed.
+scripts/sources/
+
+# Smoke-run screenshots
+/shots/
+tsconfig.tsbuildinfo
