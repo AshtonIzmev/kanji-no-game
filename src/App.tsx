@@ -6,9 +6,11 @@ import { SessionScreen } from './screens/SessionScreen'
 import { SummaryScreen } from './screens/SummaryScreen'
 import { KanjiSheet } from './screens/KanjiSheet'
 import { StatsScreen } from './screens/StatsScreen'
+import { RainScreen } from './screens/RainScreen'
 import { db, getMeta } from './db/db'
+import { setMuted } from './audio/speak'
 
-type View = 'home' | 'session' | 'summary' | 'kanji' | 'stats'
+type View = 'home' | 'session' | 'summary' | 'kanji' | 'stats' | 'rain'
 
 export function App() {
   const [corpus, setCorpus] = useState<Corpus | null>(null)
@@ -20,6 +22,7 @@ export function App() {
 
   useEffect(() => {
     void loadCorpus().then(setCorpus)
+    void getMeta<boolean>('audio:muted', false).then(setMuted)
   }, [])
 
   // A session ending is the only thing that can change the streak.
@@ -55,7 +58,11 @@ export function App() {
   }
 
   if (view === 'stats') {
-    return <StatsScreen onClose={() => setView('home')} />
+    return <StatsScreen corpus={corpus} onClose={() => setView('home')} />
+  }
+
+  if (view === 'rain') {
+    return <RainScreen corpus={corpus} onClose={() => setView('home')} />
   }
 
   if (view === 'session' && (state.phase === 'card' || state.phase === 'feedback')) {
@@ -86,6 +93,7 @@ export function App() {
     <HomeScreen
       corpus={corpus}
       onStart={() => void begin()}
+      onRain={() => setView('rain')}
       onSelect={(k) => {
         setSelected(k)
         setView('kanji')

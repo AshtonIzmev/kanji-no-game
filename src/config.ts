@@ -40,3 +40,39 @@ export const ENCOUNTER_MIN_STUDY_MS = 2200
 /** The day boundary. 4am, not midnight: a session at 1am belongs to the day
  *  that is ending, not the one starting. */
 export const DAY_ROLLOVER_HOUR = 4
+
+/**
+ * "I already know N5." Seeded items enter as Review with this stability, so
+ * they are drilled in arcade from day one instead of being taught. One failed
+ * drill drops them into relearning — the claim is checked, never trusted.
+ */
+export const KNOWN_SEED_STABILITY_DAYS = 10
+/** …and their first review is spread across this many days, so marking 79
+ *  characters known does not make tomorrow a 79-review day. */
+export const KNOWN_SEED_SPREAD_DAYS = 10
+
+/**
+ * 雨 — kanji rain. A DISCRIMINATE card with the choices falling. Every number
+ * here is a first guess; the only one that matters pedagogically is
+ * RAIN_UNLOCK, which keeps the game from ever *teaching*.
+ */
+/** Characters in arcade state needed before the mode opens. */
+export const RAIN_UNLOCK = 8
+export const RAIN_LIVES = 3
+/** A run is at most this many waves — one graded review each. */
+export const RAIN_MAX_WAVES = 40
+/** Seconds for a glyph to fall the height of the field, wave 1 → floor. */
+export const RAIN_FALL_MAX_S = 7
+export const RAIN_FALL_MIN_S = 3
+/** Wave at which the fall time reaches its floor. */
+export const RAIN_FLOOR_AT_WAVE = 30
+export const RAIN_LANES = 4
+
+/**
+ * LISTEN cards. The kana appears this long after the word is spoken, so a
+ * missed or muted voice never leaves a card unanswerable. Not sooner: the
+ * whole point is to retrieve the written form from the sound.
+ */
+export const LISTEN_REVEAL_MS = 2500
+/** In kanji rain, every Nth wave is a listen wave. */
+export const RAIN_LISTEN_EVERY = 2

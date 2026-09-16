@@ -20,12 +20,12 @@ page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 await page.goto('http://localhost:4173/', { waitUntil: 'networkidle' })
 await page.waitForTimeout(600)
 
-// 30 mature, overdue items: state Review (2), stability well past the 3-day
+// 30 mature, overdue words: state Review (2), stability well past the 3-day
 // graduation threshold, so every one of them routes to arcade.
 const seeded = await page.evaluate(async () => {
-  const chars = await fetch('./data/kanji.json')
+  const chars = await fetch('./data/vocab.json')
     .then((r) => r.json())
-    .then((k) => k.slice(0, 30).map((x) => x.c))
+    .then((v) => v.slice(0, 30).map((x) => x.w))
   const req = indexedDB.open('kanji-no-game')
   const db = await new Promise((res, rej) => {
     req.onsuccess = () => res(req.result)
@@ -34,9 +34,9 @@ const seeded = await page.evaluate(async () => {
   const tx = db.transaction('items', 'readwrite')
   const store = tx.objectStore('items')
   const yesterday = new Date(Date.now() - 86400000)
-  chars.forEach((c, i) =>
+  chars.forEach((w, i) =>
     store.put({
-      c,
+      w,
       due: yesterday,
       stability: 4 + i * 2,
       difficulty: 5,

@@ -1,14 +1,14 @@
 /**
  * Session queue assembly: everything FSRS says is due, plus a hard-capped
- * trickle of new items (spec §5).
+ * trickle of new words (spec §5).
  */
 
-import type { Corpus, Kanji } from '../data/corpus'
+import type { Corpus, Vocab } from '../data/corpus'
 import { db, dayKey, getMeta, setMeta, type ItemRow } from '../db/db'
 import { MAX_SESSION_CARDS, NEW_PER_DAY, NEW_PER_SESSION } from '../config'
 
 export interface QueueEntry {
-  kanji: Kanji
+  word: Vocab
   item?: ItemRow
   isNew: boolean
 }
@@ -25,7 +25,7 @@ export async function noteNewIntroduced(n = 1): Promise<void> {
 export interface QueueStats {
   due: number
   newAvailable: number
-  /** how many new items today's cap still allows */
+  /** how many new words today's cap still allows */
   newAllowance: number
   total: number
 }
@@ -35,21 +35,21 @@ export async function buildQueue(
   now: Date = new Date(),
 ): Promise<{ queue: QueueEntry[]; stats: QueueStats }> {
   const items = await db.items.toArray()
-  const byChar = new Map(items.map((i) => [i.c, i]))
+  const byWord = new Map(items.map((i) => [i.w, i]))
 
   const due = items
     .filter((i) => i.due.getTime() <= now.getTime())
     .sort((a, b) => a.due.getTime() - b.due.getTime())
-    .map<QueueEntry>((item) => ({ kanji: corpus.byChar.get(item.c)!, item, isNew: false }))
-    .filter((e) => e.kanji)
+    .map<QueueEntry>((item) => ({ word: corpus.byWord.get(item.w)!, item, isNew: false }))
+    .filter((e) => e.word)
 
   const introducedToday = await newIntroducedToday()
   const allowance = Math.max(0, Math.min(NEW_PER_SESSION, NEW_PER_DAY - introducedToday))
 
-  // Teaching order is JLPT band descending, then frequency — the corpus is
-  // pre-sorted, so "next unseen" is simply the first gap.
-  const unseen = corpus.kanji.filter((k) => !byChar.has(k.c))
-  const fresh = unseen.slice(0, allowance).map<QueueEntry>((kanji) => ({ kanji, isNew: true }))
+  // Teaching order is baked into the corpus: each word introduces at most one
+  // character the learner has not met, so "next unseen" is simply the first gap.
+  const unseen = corpus.vocab.filter((v) => !byWord.has(v.w))
+  const fresh = unseen.slice(0, allowance).map<QueueEntry>((word) => ({ word, isNew: true }))
 
   const stats: QueueStats = {
     due: due.length,
@@ -58,7 +58,7 @@ export async function buildQueue(
     total: 0,
   }
 
-  // New items are slow (Encounter mode, ~20s each). Spreading them through the
+  // New words are slow (Encounter mode, ~20s each). Spreading them through the
   // session rather than front-loading keeps the session from opening with two
   // minutes of reading before a single card gets answered.
   const reviews = due.slice(0, Math.max(0, MAX_SESSION_CARDS - fresh.length))

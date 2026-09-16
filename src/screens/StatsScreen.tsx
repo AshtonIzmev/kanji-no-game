@@ -6,13 +6,17 @@
 
 import { useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, dayKey, exportState, getMeta, importState } from '../db/db'
+import type { Corpus } from '../data/corpus'
+import { db, dayKey, exportState, getMeta, importState, setMeta } from '../db/db'
 import { tierFor, type Tier } from '../srs/scheduler'
-import { NEW_PER_DAY } from '../config'
+import { KNOWN_SEED_SPREAD_DAYS, NEW_PER_DAY } from '../config'
 import { newIntroducedToday } from '../srs/queue'
+import { bandWords, markBandKnown } from '../srs/seed'
+import { isMuted, setMuted } from '../audio/speak'
 
-export function StatsScreen({ onClose }: { onClose: () => void }) {
+export function StatsScreen({ corpus, onClose }: { corpus: Corpus; onClose: () => void }) {
   const [busy, setBusy] = useState<string | null>(null)
+  const [muted, setMutedState] = useState(isMuted())
   const fileInput = useRef<HTMLInputElement>(null)
 
   const data = useLiveQuery(async () => {
@@ -21,8 +25,12 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
     const reviews = await db.reviews.count()
     const counts: Record<Tier, number> = { unseen: 0, learning: 0, solid: 0, burned: 0 }
     for (const i of items) counts[tierFor(i)]++
+    const have = new Set(items.map((i) => i.w))
     const now = Date.now()
     return {
+      n5Unseen: bandWords(corpus, 5).filter((v) => !have.has(v.w)).length,
+      rainBest: await getMeta<number>('rain:best', 0),
+      rainRuns: await getMeta<number>('rain:runs', 0),
       counts,
       reviews,
       sessions,
@@ -32,7 +40,18 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
       introducedToday: await newIntroducedToday(),
       bestScore: (await db.sessions.orderBy('score').last())?.score ?? 0,
     }
-  }, [])
+  }, [corpus])
+
+  async function markN5Known() {
+    const n = data?.n5Unseen ?? 0
+    const ok = confirm(
+      `Mark the ${n} unseen words written with N5 characters as known?\n\nThey come back as quick reviews over the next ${KNOWN_SEED_SPREAD_DAYS} days. Any you miss go back into learning.`,
+    )
+    if (!ok) return
+    setBusy('seed')
+    await markBandKnown(corpus, 5)
+    setBusy(null)
+  }
 
   async function doExport() {
     setBusy('export')
@@ -58,6 +77,13 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function toggleMute() {
+    const next = !muted
+    setMuted(next)
+    setMutedState(next)
+    await setMeta('audio:muted', next)
+  }
+
   return (
     <div className="flex min-h-dvh flex-col gap-5 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
       <header className="flex items-center justify-between">
@@ -79,8 +105,14 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
           sub={`cap ${NEW_PER_DAY}`}
         />
         <Stat label="reviews all time" value={`${data?.reviews ?? 0}`} />
-        <Stat label="solid" value={`${data?.counts.solid ?? 0}`} />
-        <Stat label="burned" value={`${data?.counts.burned ?? 0}`} />
+        <Stat label="words solid" value={`${data?.counts.solid ?? 0}`} />
+        <Stat label="words burned" value={`${data?.counts.burned ?? 0}`} />
+        <Stat label="arcade best" value={`${data?.bestScore ?? 0}`} />
+        <Stat
+          label="rain best"
+          value={`${data?.rainBest ?? 0}`}
+          sub={data?.rainRuns ? `${data.rainRuns} runs` : undefined}
+        />
       </dl>
 
       <section>
@@ -106,6 +138,44 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
       </section>
 
       <section className="mt-auto space-y-2 border-t border-rule pt-4">
+        <h3 className="font-mono text-[0.65rem] tracking-widest text-ink-faint uppercase">
+          placement
+        </h3>
+        <p className="text-[0.8rem] leading-snug text-ink-soft">
+          {data?.n5Unseen
+            ? `${data.n5Unseen} words written with N5 characters have not been met yet. If you already know them, skip the teaching: they enter as known and are checked in arcade over the next ${KNOWN_SEED_SPREAD_DAYS} days.`
+            : 'Every N5 word has been met. New words now bring in N4 characters.'}
+        </p>
+        {!!data?.n5Unseen && (
+          <button
+            type="button"
+            onClick={() => void markN5Known()}
+            disabled={busy !== null}
+            className="w-full rounded-[3px] border border-rule bg-paper py-3 font-mono text-xs tracking-widest text-ink uppercase disabled:text-ink-faint"
+          >
+            {busy === 'seed' ? 'marking…' : 'mark N5 as known'}
+          </button>
+        )}
+      </section>
+
+      <section className="space-y-2 border-t border-rule pt-4">
+        <h3 className="font-mono text-[0.65rem] tracking-widest text-ink-faint uppercase">
+          audio
+        </h3>
+        <p className="text-[0.8rem] leading-snug text-ink-soft">
+          Words are read aloud by the phone's own Japanese voice. Listen cards
+          show the kana a moment later either way, so nothing depends on it.
+        </p>
+        <button
+          type="button"
+          onClick={() => void toggleMute()}
+          className="w-full rounded-[3px] border border-rule bg-paper py-3 font-mono text-xs tracking-widest text-ink uppercase"
+        >
+          {muted ? 'sound off · tap to turn on' : 'sound on · tap to mute'}
+        </button>
+      </section>
+
+      <section className="space-y-2 border-t border-rule pt-4">
         <h3 className="font-mono text-[0.65rem] tracking-widest text-ink-faint uppercase">
           this phone holds the only copy
         </h3>

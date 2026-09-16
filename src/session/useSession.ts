@@ -67,6 +67,8 @@ export function useSession(corpus: Corpus | null) {
   latest.current = state
 
   const queue = useRef<QueueEntry[]>([])
+  /** characters covered by any word the learner has met — the teaching panel
+   *  dwells on the ones that are not */
   const seen = useRef<Set<string>>(new Set())
   const repeated = useRef<Set<string>>(new Set())
   const trace = useRef<number[]>([])
@@ -84,7 +86,7 @@ export function useSession(corpus: Corpus | null) {
       db.items.toArray(),
       db.sessions.orderBy('score').last(),
     ])
-    seen.current = new Set(items.map((i) => i.c))
+    seen.current = seenKanji(corpus, items)
     repeated.current = new Set()
     trace.current = []
     queue.current = q
@@ -94,7 +96,7 @@ export function useSession(corpus: Corpus | null) {
       setState((s) => ({ ...s, phase: 'empty', stats }))
       return
     }
-    const first = buildCard(corpus, q[0].kanji, q[0].item, seen.current)
+    const first = buildCard(corpus, q[0].word, q[0].item, seen.current)
     shownAt.current = performance.now()
     answering.current = false
     setState({
@@ -126,11 +128,11 @@ export function useSession(corpus: Corpus | null) {
       const previous = entry.item
       const fsrsCard = previous ? toFsrsCard(previous) : newCard(startedAt.current)
       const next = applyGrade(fsrsCard, grade)
-      const row: ItemRow = fromFsrsCard(entry.kanji.c, next, (previous?.presented ?? 0) + 1)
+      const row: ItemRow = fromFsrsCard(entry.word.w, next, (previous?.presented ?? 0) + 1)
 
       await db.items.put(row)
       await db.reviews.add({
-        c: entry.kanji.c,
+        w: entry.word.w,
         at: new Date(),
         rating: grade,
         correct: correct ? 1 : 0,
@@ -140,7 +142,7 @@ export function useSession(corpus: Corpus | null) {
       })
       if (entry.isNew) {
         await noteNewIntroduced()
-        seen.current.add(entry.kanji.c)
+        for (const c of entry.word.k) seen.current.add(c)
       }
 
       // Arcade score: a correct answer is worth more the faster it lands.
@@ -154,8 +156,8 @@ export function useSession(corpus: Corpus | null) {
       }
 
       // An item you just got wrong comes back before the session ends — once.
-      if (!correct && !repeated.current.has(entry.kanji.c)) {
-        repeated.current.add(entry.kanji.c)
+      if (!correct && !repeated.current.has(entry.word.w)) {
+        repeated.current.add(entry.word.w)
         queue.current.push({ ...entry, item: row, isNew: false })
       }
 
@@ -211,8 +213,8 @@ export function useSession(corpus: Corpus | null) {
     }
     const entry = queue.current[nextIndex]
     // re-read the row: a repeated item's FSRS state changed since queue build
-    const item = entry.item ?? (await db.items.get(entry.kanji.c))
-    const card = buildCard(corpus, entry.kanji, item, seen.current)
+    const item = entry.item ?? (await db.items.get(entry.word.w))
+    const card = buildCard(corpus, entry.word, item, seen.current)
     shownAt.current = performance.now()
     answering.current = false
     setState((s) => ({
@@ -230,6 +232,13 @@ export function useSession(corpus: Corpus | null) {
   }, [corpus, state.phase])
 
   return { state, start, answer, advance, finish }
+}
+
+/** Every character inside every word the learner has met. */
+export function seenKanji(corpus: Corpus, items: ItemRow[]): Set<string> {
+  const out = new Set<string>()
+  for (const i of items) for (const c of corpus.byWord.get(i.w)?.k ?? []) out.add(c)
+  return out
 }
 
 /** A session counts if at least one card was answered — deliberately trivial
