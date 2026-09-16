@@ -8,6 +8,7 @@ import { KanjiSheet } from './screens/KanjiSheet'
 import { StatsScreen } from './screens/StatsScreen'
 import { RainScreen } from './screens/RainScreen'
 import { db, getMeta } from './db/db'
+import { setMuted } from './audio/speak'
 
 type View = 'home' | 'session' | 'summary' | 'kanji' | 'stats' | 'rain'
 
@@ -21,6 +22,7 @@ export function App() {
 
   useEffect(() => {
     void loadCorpus().then(setCorpus)
+    void getMeta<boolean>('audio:muted', false).then(setMuted)
   }, [])
 
   // A session ending is the only thing that can change the streak.

@@ -58,6 +58,20 @@ export function tierFor(item: Pick<ItemRow, 'state' | 'stability'> | undefined):
   return 'learning'
 }
 
+/**
+ * A kanji's tier on the collection sheet is derived from the words that
+ * contain it — there is no kanji card. Met once any word is met; solid once
+ * any word is solid; burned only when every word is. A character with no
+ * word behind it stays unseen: the app has nothing to teach it with.
+ */
+export function kanjiTierFrom(wordItems: (ItemRow | undefined)[]): Tier {
+  const tiers = wordItems.map(tierFor)
+  if (tiers.length === 0 || tiers.every((t) => t === 'unseen')) return 'unseen'
+  if (tiers.every((t) => t === 'burned')) return 'burned'
+  if (tiers.some((t) => t === 'solid' || t === 'burned')) return 'solid'
+  return 'learning'
+}
+
 /** Seconds allowed for one arcade card. Shrinks with stability. */
 export function arcadeSeconds(stability: number): number {
   const t = Math.min(1, Math.max(0, (stability - GRADUATION_STABILITY_DAYS) / ARCADE_TIME_FLOOR_AT))

@@ -15,7 +15,9 @@ import { db, fromFsrsCard, getMeta, setMeta, toFsrsCard, type ItemRow } from '..
 import { applyGrade, gradeFor } from '../srs/scheduler'
 import { hash } from '../srs/rng'
 import { bumpStreak } from '../session/useSession'
-import { RAIN_LANES, RAIN_LIVES, RAIN_UNLOCK } from '../config'
+import { LISTEN_REVEAL_MS, RAIN_LANES, RAIN_LIVES, RAIN_UNLOCK } from '../config'
+import { hasJapaneseVoice, speak } from '../audio/speak'
+import { seenKanji } from '../session/useSession'
 import {
   hitPoints,
   makeWave,
@@ -79,13 +81,13 @@ async function settle(r: Run, outcome: Outcome): Promise<void> {
   const elapsedMs = (w.hitY ?? 1) * limitMs
   const grade = gradeFor('arcade', outcome === 'hit', elapsedMs, limitMs)
   const next = applyGrade(toFsrsCard(w.item), grade)
-  await db.items.put(fromFsrsCard(w.kanji.c, next, w.item.presented + 1))
+  await db.items.put(fromFsrsCard(w.word.w, next, w.item.presented + 1))
   await db.reviews.add({
-    c: w.kanji.c,
+    w: w.word.w,
     at: new Date(),
     rating: grade,
     correct: outcome === 'hit' ? 1 : 0,
-    kind: 'discriminate',
+    kind: w.promptKind === 'listen' ? 'listen' : 'which',
     mode: 'rain',
     ms: Math.round(elapsedMs),
   })
@@ -129,7 +131,7 @@ export function RainScreen({ corpus, onClose }: Props) {
 
   const start = useCallback(async () => {
     const items = await db.items.toArray()
-    seen.current = new Set(items.map((i) => i.c))
+    seen.current = seenKanji(corpus, items)
     const now = new Date()
     const plan = planRun(rainPool(corpus, items), now, hash(`rain-run:${now.getTime()}`))
     if (plan.length === 0) return
@@ -137,7 +139,7 @@ export function RainScreen({ corpus, onClose }: Props) {
     run.current = {
       plan,
       idx: 0,
-      wave: makeWave(corpus, corpus.byChar.get(first.c)!, first, 1, seen.current),
+      wave: makeWave(corpus, corpus.byWord.get(first.w)!, first, 1, seen.current),
       lives: RAIN_LIVES,
       score: 0,
       combo: 0,
@@ -197,12 +199,14 @@ export function RainScreen({ corpus, onClose }: Props) {
         }
         r.idx += 1
         const item = r.plan[r.idx]
-        r.wave = makeWave(corpus, corpus.byChar.get(item.c)!, item, r.idx + 1, seen.current)
+        r.wave = makeWave(corpus, corpus.byWord.get(item.w)!, item, r.idx + 1, seen.current)
+        announce(r.wave)
       }
 
       setTick((t) => t + 1)
       raf = requestAnimationFrame(frame)
     }
+    announce(run.current!.wave)
     raf = requestAnimationFrame(frame)
 
     // quitting mid-run: what was answered is already graded; close the run out
@@ -210,6 +214,16 @@ export function RainScreen({ corpus, onClose }: Props) {
 
     return () => cancelAnimationFrame(raf)
   }, [phase, corpus, onClose])
+
+  // LISTEN waves: speak the word as the wave begins, show the kana a moment
+  // later — or at once when there is no voice to speak with.
+  const [kanaAt, setKanaAt] = useState(0)
+  const announce = useCallback((w: Wave) => {
+    if (w.promptKind !== 'listen') return
+    const voiced = hasJapaneseVoice()
+    if (voiced) void speak(w.word.r)
+    setKanaAt(performance.now() + (voiced ? LISTEN_REVEAL_MS : 0))
+  }, [])
 
   /** A tap scores at once — waiting for the next frame would let a fast
    *  second tap land before the wave is marked over. */
@@ -237,14 +251,13 @@ export function RainScreen({ corpus, onClose }: Props) {
             </p>
           </div>
           <p className="text-[0.95rem] leading-relaxed text-ink-soft">
-            A meaning waits at the bottom. Four characters fall. Tap the one it
-            names before it lands. A wrong tap or a landing costs one of three
-            lives, and the rain gets faster the longer you last.
+            A meaning waits at the bottom, or a word is spoken. Four words fall.
+            Tap the one it names before it lands. A wrong tap or a landing costs
+            one of three lives, and the rain gets faster the longer you last.
           </p>
           <p className="text-[0.85rem] leading-relaxed text-ink-faint">
-            Only characters you already hold fall here — the game drills, it
-            never teaches — and every catch is a real review, scheduled like any
-            other.
+            Only words you already hold fall here — the game drills, it never
+            teaches — and every catch is a real review, scheduled like any other.
           </p>
           <dl className="grid grid-cols-2 gap-px border border-rule bg-rule font-mono">
             <div className="bg-paper px-4 py-3">
@@ -317,6 +330,7 @@ export function RainScreen({ corpus, onClose }: Props) {
   if (!r) return null
   const w = r.wave
   const travel = Math.max(0, fieldH - DROP_PX)
+  const kanaShown = w.promptKind === 'listen' && (performance.now() >= kanaAt || w.outcome !== undefined)
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -362,6 +376,7 @@ export function RainScreen({ corpus, onClose }: Props) {
               style={{
                 left: `${((d.lane + 0.5) * 100) / RAIN_LANES}%`,
                 transform: `translate3d(-50%, ${d.y * travel}px, 0)`,
+                width: `calc(${100 / RAIN_LANES}% - 6px)`,
               }}
             >
               <button
@@ -381,9 +396,9 @@ export function RainScreen({ corpus, onClose }: Props) {
                 ]
                   .filter(Boolean)
                   .join(' ')}
-                style={{ width: DROP_PX, height: DROP_PX, fontSize: '2.35rem' }}
+                style={{ width: '100%', height: DROP_PX, fontSize: dropFont(d.w) }}
               >
-                {d.c}
+                {d.w}
               </button>
             </div>
           )
@@ -393,10 +408,23 @@ export function RainScreen({ corpus, onClose }: Props) {
       {/* the prompt: what is being hunted */}
       <div className="shrink-0 pt-3">
         <p className="font-mono text-[0.62rem] tracking-widest text-ink-faint uppercase">
-          which character
+          {w.promptKind === 'listen' ? 'what did you hear' : 'which word'}
         </p>
-        <div className="mt-1.5 flex min-h-[4.75rem] items-center gap-3 rounded-[3px] border border-rule bg-paper-deep/40 px-4 py-3">
-          <span className="font-ui text-2xl leading-tight text-balance">{w.prompt}</span>
+        <div
+          data-kind={w.promptKind}
+          onClick={() => w.promptKind === 'listen' && void speak(w.word.r)}
+          className="mt-1.5 flex min-h-[4.75rem] items-center gap-3 rounded-[3px] border border-rule bg-paper-deep/40 px-4 py-3"
+        >
+          {w.promptKind === 'meaning' ? (
+            <span className="font-ui text-2xl leading-tight text-balance">{w.word.m}</span>
+          ) : (
+            <>
+              <span className="font-mincho text-3xl leading-none text-ink-soft">耳</span>
+              <span className={`font-gothic text-2xl leading-none ${kanaShown ? '' : 'invisible'}`}>
+                {w.word.r}
+              </span>
+            </>
+          )}
           {w.outcome === 'hit' && (
             <span className="anim-rise ml-auto font-mono text-base text-mastery">+{r.lastPts}</span>
           )}
@@ -406,13 +434,18 @@ export function RainScreen({ corpus, onClose }: Props) {
                 w.face === 'mincho' ? 'font-mincho' : 'font-gothic'
               }`}
             >
-              {w.kanji.c}
+              {w.word.w}
             </span>
           )}
         </div>
       </div>
     </div>
   )
+}
+
+/** Words up to four characters share a lane ~90px wide. */
+function dropFont(w: string): string {
+  return w.length <= 1 ? '2.35rem' : w.length === 2 ? '1.7rem' : w.length === 3 ? '1.25rem' : '1rem'
 }
 
 function Frame({ children, onClose }: { children: ReactNode; onClose: () => void }) {

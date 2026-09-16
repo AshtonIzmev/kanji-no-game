@@ -28,8 +28,20 @@ await page.getByRole('button', { name: /start at N4/ }).click()
 await page.waitForTimeout(800)
 await shot('21-home-after-placement')
 
-const kanji = await page.evaluate(() => fetch('./data/kanji.json').then((r) => r.json()))
-const byMeaning = new Map(kanji.map((k) => [k.m[0], k.c]))
+const vocab = await page.evaluate(() => fetch('./data/vocab.json').then((r) => r.json()))
+const byMeaning = new Map(vocab.map((v) => [v.m, v.w]))
+const byReading = new Map(vocab.map((v) => [v.r, v.w]))
+
+/** What the prompt bar is asking for, resolved to the written word. Listen
+ *  waves show the kana at once here: headless Chromium has no Japanese voice. */
+async function target() {
+  const bar = page.locator('[data-kind]').first()
+  const kind = await bar.getAttribute('kind').catch(() => null)
+  const k = kind ?? (await bar.getAttribute('data-kind'))
+  const spans = await bar.locator('span').allTextContents()
+  if (k === 'meaning') return byMeaning.get(spans[0]) ?? null
+  return byReading.get(spans[1]) ?? null
+}
 
 await page.getByRole('button', { name: /kanji rain/ }).click()
 await page.waitForTimeout(500)
@@ -62,14 +74,11 @@ async function tapChar(c) {
   return false
 }
 
-const prompt = () => page.locator('.rain-lanes ~ div span.font-ui').first().textContent()
-
 let hits = 0
 for (let wave = 0; wave < 4; wave++) {
-  const m = await prompt()
-  const target = byMeaning.get(m)
-  if (!target) break
-  if (await tapChar(target)) hits++
+  const t = await target()
+  if (!t) break
+  if (await tapChar(t)) hits++
   await page.waitForTimeout(150)
   if (wave === 0) await shot('24-rain-hit')
   await page.waitForTimeout(700)
@@ -85,8 +94,7 @@ let wrongShot = false
 for (let i = 0; i < 12; i++) {
   const over = await page.getByRole('button', { name: 'もう一度' }).count()
   if (over) break
-  const m = await prompt().catch(() => null)
-  const target = m ? byMeaning.get(m) : null
+  const t = await target().catch(() => null)
   const tapped = await page.evaluate((t) => {
     const field = document.querySelector('.rain-lanes')
     if (!field) return false
@@ -98,7 +106,7 @@ for (let i = 0; i < 12; i++) {
       return true
     }
     return false
-  }, target)
+  }, t)
   if (tapped && !wrongShot) {
     wrongShot = true
     await page.waitForTimeout(200)
@@ -128,7 +136,7 @@ const rows = await page.evaluate(async () => {
     items: items.length,
     review: items.filter((i) => i.state === 2).length,
     relearning: items.filter((i) => i.state === 3).length,
-    reviews: reviews.map((r) => `${r.c}:${r.mode}:${r.rating}`),
+    reviews: reviews.map((r) => `${r.w}:${r.kind}:${r.rating}`),
   }
 })
 console.log(JSON.stringify(rows))

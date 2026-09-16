@@ -2,28 +2,30 @@
  * 雨 — kanji rain. The game logic, kept free of React so it can be reasoned
  * about (and, one day, tested) on its own.
  *
- * It is a DISCRIMINATE card with the choices falling: an English meaning sits
- * at the bottom of the screen, four characters descend in four lanes, and the
- * learner taps the one that matches before it reaches the ground. A wrong tap
- * or a landing costs a life. Every wave is one graded FSRS review of the target
- * character, exactly as an arcade card would be — one pool, one scheduler.
+ * It is the WHICH and LISTEN cards with the choices falling: a meaning sits at
+ * the bottom of the screen — or a word is spoken — four written words descend
+ * in four lanes, and the learner taps the one that matches before it reaches
+ * the ground. A wrong tap or a landing costs a life. Every wave is one graded
+ * FSRS review of the target word, exactly as an arcade card would be — one
+ * pool, one scheduler.
  *
- * Only characters already in arcade state fall. The mode never teaches; it
- * drills, under more pressure than the session does. The etymology strip and
- * every other teaching aid stay out of it for the same reason they stay off
- * graded prompts (README, "Encounter only").
+ * Only words already in arcade state fall. The mode never teaches; it drills,
+ * under more pressure than the session does. The etymology strip and every
+ * other teaching aid stay out of it for the same reason they stay off graded
+ * prompts (README, "Encounter only").
  */
 
-import type { Corpus, Kanji } from '../data/corpus'
+import type { Corpus, Vocab } from '../data/corpus'
 import type { ItemRow } from '../db/db'
 import { modeFor } from '../srs/scheduler'
 import { hash, mulberry32, pickDistinct, shuffled } from '../srs/rng'
-import { clusterPeers, faceFor, strokeNeighbours } from '../cards/build'
+import { faceFor, wordPool } from '../cards/build'
 import {
   RAIN_FALL_MAX_S,
   RAIN_FALL_MIN_S,
   RAIN_FLOOR_AT_WAVE,
   RAIN_LANES,
+  RAIN_LISTEN_EVERY,
   RAIN_MAX_WAVES,
 } from '../config'
 
@@ -31,7 +33,8 @@ export type DropState = 'falling' | 'hit' | 'wrong' | 'gone'
 
 export interface Drop {
   id: number
-  c: string
+  /** the written word */
+  w: string
   lane: number
   /** 0 = top of the field, 1 = touching the ground */
   y: number
@@ -43,11 +46,14 @@ export interface Drop {
 
 export type Outcome = 'hit' | 'wrong' | 'missed'
 
+export type PromptKind = 'meaning' | 'listen'
+
 export interface Wave {
   n: number
-  kanji: Kanji
+  word: Vocab
   item: ItemRow
-  prompt: string
+  /** the meaning shown, or the reading spoken */
+  promptKind: PromptKind
   face: 'mincho' | 'gothic'
   drops: Drop[]
   /** field-heights per second */
@@ -63,7 +69,7 @@ export interface Wave {
 
 /** Everything that may fall: in Review, past the graduation threshold. */
 export function rainPool(corpus: Corpus, items: ItemRow[]): ItemRow[] {
-  return items.filter((i) => corpus.byChar.has(i.c) && modeFor(i) === 'arcade')
+  return items.filter((i) => corpus.byWord.has(i.w) && modeFor(i) === 'arcade')
 }
 
 /**
@@ -74,7 +80,7 @@ export function rainPool(corpus: Corpus, items: ItemRow[]): ItemRow[] {
 export function planRun(pool: ItemRow[], now: Date, seed: number): ItemRow[] {
   const rand = mulberry32(seed)
   const t = now.getTime()
-  const jitter = new Map(pool.map((i) => [i.c, rand()]))
+  const jitter = new Map(pool.map((i) => [i.w, rand()]))
   return pool
     .slice()
     .sort((a, b) => {
@@ -84,7 +90,7 @@ export function planRun(pool: ItemRow[], now: Date, seed: number): ItemRow[] {
       const al = a.last_review?.getTime() ?? 0
       const bl = b.last_review?.getTime() ?? 0
       if (al !== bl) return al - bl
-      return (jitter.get(a.c) ?? 0) - (jitter.get(b.c) ?? 0)
+      return (jitter.get(a.w) ?? 0) - (jitter.get(b.w) ?? 0)
     })
     .slice(0, RAIN_MAX_WAVES)
 }
@@ -99,22 +105,25 @@ let nextDropId = 1
 
 export function makeWave(
   corpus: Corpus,
-  kanji: Kanji,
+  word: Vocab,
   item: ItemRow,
   n: number,
-  seen: Set<string>,
+  seenKanji: Set<string>,
 ): Wave {
-  const rand = mulberry32(hash(`rain:${kanji.c}:${item.reps}:${n}`))
-  const peers = clusterPeers(corpus, kanji)
-  const pool = peers.length >= 3 ? peers : [...peers, ...strokeNeighbours(corpus, kanji, seen)]
-  const wrong = pickDistinct(pool, RAIN_LANES - 1, rand, (c) => c)
+  const rand = mulberry32(hash(`rain:${word.w}:${item.reps}:${n}`))
+  const promptKind: PromptKind = n % RAIN_LISTEN_EVERY === 0 ? 'listen' : 'meaning'
+  // a homophone, or a word with the same gloss, would be a second right answer
+  const pool = wordPool(corpus, word, seenKanji).filter((v) =>
+    promptKind === 'listen' ? v.r !== word.r : v.m.toLowerCase() !== word.m.toLowerCase(),
+  )
+  const wrong = pickDistinct(pool.slice(0, 24), RAIN_LANES - 1, rand, (v) => v.w).map((v) => v.w)
   // never fewer than four: pad from the corpus so a wave cannot be easier
-  for (const k of corpus.kanji) {
+  for (const v of corpus.vocab) {
     if (wrong.length >= RAIN_LANES - 1) break
-    if (k.c !== kanji.c && !wrong.includes(k.c)) wrong.push(k.c)
+    if (v.w !== word.w && !wrong.includes(v.w)) wrong.push(v.w)
   }
 
-  const chars = shuffled([kanji.c, ...wrong], rand)
+  const chars = shuffled([word.w, ...wrong], rand)
   const lanes = shuffled(Array.from({ length: RAIN_LANES }, (_, i) => i), rand)
   const fall = fallSeconds(n)
   // glyphs enter one at a time; the target's turn in the order is random, so
@@ -123,16 +132,16 @@ export function makeWave(
 
   return {
     n,
-    kanji,
+    word,
     item,
-    prompt: kanji.m[0],
-    face: faceFor(kanji.c),
-    drops: chars.map((c, i) => ({
+    promptKind,
+    face: faceFor(word.w),
+    drops: chars.map((w, i) => ({
       id: nextDropId++,
-      c,
+      w,
       lane: lanes[i],
       y: -0.2,
-      target: c === kanji.c,
+      target: w === word.w,
       state: 'falling',
       enterAt: i * gap,
     })),

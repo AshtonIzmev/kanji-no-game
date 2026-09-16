@@ -67,3 +67,12 @@ export const RAIN_FALL_MIN_S = 3
 /** Wave at which the fall time reaches its floor. */
 export const RAIN_FLOOR_AT_WAVE = 30
 export const RAIN_LANES = 4
+
+/**
+ * LISTEN cards. The kana appears this long after the word is spoken, so a
+ * missed or muted voice never leaves a card unanswerable. Not sooner: the
+ * whole point is to retrieve the written form from the sound.
+ */
+export const LISTEN_REVEAL_MS = 2500
+/** In kanji rain, every Nth wave is a listen wave. */
+export const RAIN_LISTEN_EVERY = 2

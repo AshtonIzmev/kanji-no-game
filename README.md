@@ -1,10 +1,13 @@
 # 漢字 — Kanji No Game
 
-A JLPT-ordered kanji **recognition** trainer. Phone only. No backend.
+A JLPT-ordered kanji **recognition** trainer that teaches through words. Phone
+only. No backend.
 
-Implements Build Spec v1: one item pool, one FSRS scheduler, two presentations
-(Encounter and Arcade), three card types, and a genkō yōshi collection sheet as
-the home screen.
+Implements Build Spec v1 with one structural change: the unit of study is the
+**word**, not the character. One item pool of 420 N5/N4 words, one FSRS
+scheduler, two presentations (Encounter and Arcade), four card types, a falling
+game, and a genkō yōshi collection sheet of kanji as the home screen — each
+square's progress derived from the words that contain it.
 
 ```
 npm install
@@ -18,7 +21,20 @@ works without touching Python.
 
 ---
 
-## The two changes to the spec, and why
+## The three changes to the spec, and why
+
+**Words, not characters.** The spec's item was the kanji, with one FSRS card
+blending its meaning and all its readings. That card has a homophone problem
+(し is read by 13 characters in this corpus, こう by 9) and a granularity
+problem (knowing 生 means "life" says nothing about whether you know せい, い or
+なま). Both dissolve when the item is a word: 学生, 生きる and 生まれる are
+three cards with three schedules, and a spoken word is unambiguous where a
+spoken reading is not. The next reading of a character arrives when the next
+word containing it arrives, under the same daily cap — no facet machinery.
+The kanji sheet stays: a square is *learning* once any word containing the
+character has been met, *solid* once one is solid, *burned* once all are. The
+JLPT N4 exam tests words in context and never bare kanji, so this is also the
+more honest target.
 
 **No backend.** §6 carved out one deviation from "zero backend" — a two-endpoint
 FastAPI service so SRS state would not fork between phone and desktop. That
@@ -31,6 +47,11 @@ export/import of the whole database as a JSON file — the device-transfer path,
 and the backup to take before clearing browser storage. §6's sync endpoints
 remain the right answer the day a second device appears; nothing in the data
 model prevents adding them.
+
+The database is at v3. v1 held one card per kanji; there is no honest way to
+turn a kanji card into word cards, so opening the app over a v1 database drops
+the item and review tables and keeps the streak and session history. v1 backups
+are refused on import for the same reason.
 
 **Phone only, meant literally.** Layouts are `dvh`-height flex columns with
 safe-area insets, thumb-reachable 2×2 choices, and a hard `26rem` column cap on
@@ -122,13 +143,25 @@ retrieval practice.
 
 | Type | Prompt | Choices | Distractor source |
 |---|---|---|---|
-| RECOGNISE | kanji glyph | 4 English meanings | cluster peers, then stroke-count ±1 |
-| DISCRIMINATE | English meaning | 4 kanji | the confusion cluster; fallback stroke-count ±1 from the seen set |
-| READ | jukugo | 4 kana readings | precomputed at build time |
+| MEANING | written word | 4 English meanings | meanings of confusable words |
+| WHICH | English meaning | 4 written words | words sharing a character, then words built on a visual near-twin (犬 against 大 and 太), then same shape and band |
+| READ | written word | 4 kana readings | precomputed at build time |
+| LISTEN | the word, spoken | 4 written words | as WHICH, minus homophones |
 
-Type rotates deterministically per item, so every type comes round on a
-predictable cadence. Choice order is seeded by (item, review count):
-reproducible, never the same layout twice running.
+The first probe after a word is taught is always MEANING; after that the type
+rotates deterministically per word, so every type comes round on a predictable
+cadence. Choice order is seeded by (word, review count): reproducible, never
+the same layout twice running. The confusion pool prefers words the learner has
+already met — confusion is between things you have seen.
+
+**Audio is a cue, never a requirement.** LISTEN speaks the word through the
+phone's own Japanese voice (Web Speech API: offline, no assets) and shows the
+kana `LISTEN_REVEAL_MS` later regardless — ringer switch, train, or a phone
+with no Japanese voice must never make a card unanswerable. With no voice the
+card degrades to kana → written form, still a card. In arcade the clock waits
+for the voice to finish. Every card also speaks the word at feedback. Sound can
+be muted on the stats screen. Speech *input* is deliberately absent: it is
+slow, server-bound on iOS and hopeless in noise. Speaking remains a non-goal.
 
 ### The etymology strip (字源)
 
@@ -168,34 +201,48 @@ same way "built from" already doesn't.
 The subset is renamed `KNG Seal Subset` because LXGW Seal carries Reserved Font
 Names under OFL 1.1 §4 and subsetting is a modification.
 
+### Teaching order
+
+Words are ordered at build time so that each one introduces **at most one
+character the learner has not met**: a word becomes teachable once every
+character in it has been reached in the kanji order (JLPT band, then
+frequency), kun words before jukugo, shorter first. All 420 words satisfy this;
+the first 147 use only N5 characters. The Encounter panel therefore almost
+always has exactly one character to dwell on, shown in full (components,
+etymology, other words), with the word's already-met characters listed
+compactly beneath. A consequence worth knowing: 東 is reachable only through
+東京, so it waits for 京.
+
 ### Placement — "I know N5"
 
-The teaching order is N5 first, fifteen a day, hard. For someone who already
-passed N5 that is six sessions of being taught 日 and 一 before the first N4
-character appears, and the seven-day gate below would then blame the design for
-what was the onboarding.
+The teaching order is N5 first, fifteen words a day, hard. For someone who
+already passed N5 that is ten sessions of being taught 日 and 一 before the
+first N4 character appears, and the seven-day gate below would then blame the
+design for what was the onboarding.
 
 So a fresh install offers, once, to mark N5 as known (the same button lives on
 the stats screen afterwards). "Known" is a claim, and it is recorded as FSRS
-state rather than as a skip: the 79 characters enter as Review items at
-`KNOWN_SEED_STABILITY_DAYS` (10) with their first review spread over the next
-`KNOWN_SEED_SPREAD_DAYS` (10), so tomorrow is not a 79-review day. Each is then
-drilled once in arcade; a miss drops it into relearning like any other lapse.
-Nothing is trusted, nothing is taught twice. New characters come from N4 from
-the first session, and kanji rain (below) is unlocked immediately.
+state rather than as a skip: the 147 words written entirely with N5 characters
+enter as Review items at `KNOWN_SEED_STABILITY_DAYS` (10) with their first
+review spread over the next `KNOWN_SEED_SPREAD_DAYS` (10), so tomorrow is not a
+147-review day. Each is then drilled once in arcade; a miss drops it into
+relearning like any other lapse. Nothing is trusted, nothing is taught twice.
+New words bring in N4 characters from the first session, and kanji rain
+(below) is unlocked immediately.
 
 ### 雨 — kanji rain
 
-A DISCRIMINATE card with the choices falling. The English meaning sits along the
-bottom edge, where the thumb already is; four characters descend in four lanes;
-tap the one it names before it reaches the ground. A wrong tap or a landing
-costs one of three lives. The fall takes 7 seconds on wave 1 and 3 seconds by
-wave 30 — the session's arcade clock is a bar that shrinks, here the clock is
-the character getting closer.
+The WHICH and LISTEN cards with the choices falling. A meaning sits along the
+bottom edge, where the thumb already is — or, every `RAIN_LISTEN_EVERY`th
+wave, the word is spoken and the kana appears a moment later; four written
+words descend in four lanes; tap the one it names before it reaches the ground.
+A wrong tap or a landing costs one of three lives. The fall takes 7 seconds on
+wave 1 and 3 seconds by wave 30 — the session's arcade clock is a bar that
+shrinks, here the clock is the word getting closer.
 
 Two rules keep it honest:
 
-- **It never teaches.** Only characters already in arcade state fall
+- **It never teaches.** Only words already in arcade state fall
   (`modeFor(item) === 'arcade'`), and the mode is locked until eight of them
   exist. The etymology strip and every other teaching aid stay out for the same
   reason they stay off graded prompts.
@@ -203,9 +250,9 @@ Two rules keep it honest:
   `gradeFor('arcade', …)` rule as a session card — Easy if caught in the top
   40% of the field, Hard below 80%, Again on a miss — and written to the same
   FSRS row. A run is planned due-first, then longest-unreviewed, so it clears
-  the review queue rather than re-drilling yesterday's characters. Runs are
-  capped at 40 waves. Rain scores are kept apart from arcade sessions so the
-  ghost run is not polluted.
+  the review queue rather than re-drilling yesterday's words. Runs are capped
+  at 40 waves. Rain scores are kept apart from arcade sessions so the ghost run
+  is not polluted.
 
 Logic lives in `src/game/rain.ts` with no React in it; `RainScreen.tsx` only
 draws it. `scripts/smoke-rain.mjs` takes the placement offer, plays a few waves,
@@ -213,7 +260,8 @@ lets one land, throws the rest, and dumps what was written to IndexedDB.
 
 ### Retention (§5)
 
-Collection sheet as home, four mastery tiers straight off FSRS stability, a
+Collection sheet as home, four mastery tiers straight off FSRS stability (a
+kanji's tier derived from its words), a
 daily streak that counts on one answered card, ghost runs against your own best
 timed session (live delta in the arcade header, full comparison at the summary),
 and the caps: **5 new per session, 15 per day, hard**.
@@ -247,20 +295,22 @@ scripts/
   smoke.mjs           walk a session in an iPhone viewport, screenshot each state
   smoke-arcade.mjs    same, with mature FSRS state seeded so arcade is reachable
   smoke-rain.mjs      placement offer → kanji rain → run summary
+  smoke-migrate.mjs   open the app over a v1 (kanji-keyed) database
 data/clusters.json    hand-curated visual confusion sets — do not generate these
 data/etymology/       drop-in ancient-form SVGs (see its README)
 src/
   config.ts           every tunable number, with the reason it has that value
-  data/corpus.ts      load + index the static JSON
-  db/db.ts            Dexie schema, day keys, export/import
+  data/corpus.ts      load + index the static JSON; words by kanji
+  db/db.ts            Dexie schema (v3: one row per word), day keys, export/import
+  audio/speak.ts      the phone's Japanese voice; muteable; never required
   srs/scheduler.ts    FSRS, mode routing, tiers, arcade clock, grading
   srs/queue.ts        due reviews + capped new items
   srs/seed.ts         placement: mark a band as known, as FSRS state
   game/rain.ts        雨 — waves, drops, planning, scoring; no React
-  cards/build.ts      the three card types and their distractors
+  cards/build.ts      the four card types and the confusable-word pool
   session/useSession  queue, grading, persistence, score
   components/         GenkoCell · ChoiceGrid · CollectionGrid · EtymologyStrip
-  screens/            Home · Session · Encounter · Summary · KanjiSheet · Stats · Rain
+  screens/            Home · Session · WordPanel · Encounter · Summary · KanjiSheet · Stats · Rain
 ```
 
 The smoke scripts need Playwright (`npm i -D playwright`); they are a way to
@@ -283,7 +333,7 @@ conclusion is that the design is wrong, not that it needs more features.**
 
 ## Parked
 
-Isolated Jukugo Minimal Pairs (§9) is a fourth card type with no architectural
+Isolated Jukugo Minimal Pairs (§9) is a fifth card type with no architectural
 change — `ids.txt` is already parsed and the reverse index is ~30 lines. Revisit
 at N3, when the phonetic-series density exists. LLM mnemonics and voice-tutor
 coupling stay parked.

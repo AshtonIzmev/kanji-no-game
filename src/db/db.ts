@@ -11,9 +11,9 @@ import Dexie, { type Table } from 'dexie'
 import type { Card as FsrsCard } from 'ts-fsrs'
 import { DAY_ROLLOVER_HOUR } from '../config'
 
-/** One FSRS card per kanji — one pool, one scheduler (spec §2). */
+/** One FSRS card per word — one pool, one scheduler (spec §2). */
 export interface ItemRow {
-  c: string
+  w: string
   due: Date
   stability: number
   difficulty: number
@@ -30,14 +30,14 @@ export interface ItemRow {
 
 export interface ReviewRow {
   id?: number
-  c: string
+  w: string
   at: Date
   /** FSRS rating 1..4 */
   rating: number
   correct: 0 | 1
   /** card type shown */
   kind: string
-  /** 'encounter' | 'arcade' */
+  /** 'encounter' | 'arcade' | 'rain' */
   mode: string
   /** answer latency in ms */
   ms: number
@@ -77,6 +77,23 @@ class KanjiDB extends Dexie {
       sessions: '++id, day, endedAt, score',
       meta: 'key',
     })
+    // v1 kept one card per kanji. The unit of study is now the word, and a
+    // kanji card has no honest translation into word cards, so the two
+    // tables are dropped and recreated — a primary key cannot be changed in
+    // place. Streak and session history survive; the per-day intake counters
+    // and the placement marker do not, since they described kanji.
+    this.version(2).stores({ items: null, reviews: null })
+    this.version(3)
+      .stores({
+        items: 'w, due, state, stability',
+        reviews: '++id, w, at',
+      })
+      .upgrade((tx) =>
+        tx
+          .table('meta')
+          .filter((r: MetaRow) => r.key.startsWith('new:') || r.key.startsWith('known:'))
+          .delete(),
+      )
   }
 }
 
@@ -127,9 +144,9 @@ export function toFsrsCard(row: ItemRow): FsrsCard {
   } as FsrsCard
 }
 
-export function fromFsrsCard(c: string, card: FsrsCard, presented: number): ItemRow {
+export function fromFsrsCard(w: string, card: FsrsCard, presented: number): ItemRow {
   return {
-    c,
+    w,
     due: card.due,
     stability: card.stability,
     difficulty: card.difficulty,
@@ -153,7 +170,7 @@ export async function exportState(): Promise<string> {
     db.sessions.toArray(),
     db.meta.toArray(),
   ])
-  return JSON.stringify({ v: 1, exportedAt: new Date(), items, reviews, sessions, meta })
+  return JSON.stringify({ v: 2, exportedAt: new Date(), items, reviews, sessions, meta })
 }
 
 export async function importState(json: string): Promise<void> {
@@ -162,6 +179,8 @@ export async function importState(json: string): Promise<void> {
       ? new Date(value as string)
       : value,
   )
+  // v1 backups hold kanji cards; there is nothing honest to turn them into.
+  if (parsed.v !== 2) throw new Error('unsupported backup version')
   await db.transaction('rw', db.items, db.reviews, db.sessions, db.meta, async () => {
     await Promise.all([db.items.clear(), db.reviews.clear(), db.sessions.clear(), db.meta.clear()])
     await db.items.bulkPut(parsed.items ?? [])

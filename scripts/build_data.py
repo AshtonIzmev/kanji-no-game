@@ -478,6 +478,28 @@ def main():
         for c in targets:
             vocab_of[c].append(idx)
 
+    # --- word order ----------------------------------------------------------
+    # The word is the unit of study; the kanji order above decides which words
+    # are ready when. A word becomes teachable once every character in it has
+    # been reached in the kanji order, so each new word introduces at most one
+    # character the learner has not met. Among words that become ready at the
+    # same character: kun words before jukugo, shorter first.
+    pos = {c: i for i, c in enumerate(order)}
+    ranked = sorted(
+        range(len(vocab_out)),
+        key=lambda i: (
+            max(pos[c] for c in vocab_out[i]["k"]),
+            vocab_out[i]["jukugo"],
+            len(vocab_out[i]["w"]),
+            vocab_out[i]["w"],
+        ),
+    )
+    remap = {old: new for new, old in enumerate(ranked)}
+    vocab_out = [vocab_out[i] for i in ranked]
+    for rank, v in enumerate(vocab_out):
+        v["o"] = rank
+    vocab_of = {c: [remap[i] for i in ids_] for c, ids_ in vocab_of.items()}
+
     # --- kanji records -------------------------------------------------------
     kanji_out = []
     for rank, c in enumerate(order):

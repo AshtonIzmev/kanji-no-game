@@ -7,11 +7,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import type { Corpus, Kanji } from '../data/corpus'
 import { db, getMeta } from '../db/db'
-import { tierFor, type Tier } from '../srs/scheduler'
+import { kanjiTierFrom, type Tier } from '../srs/scheduler'
 import { CollectionGrid, TierLegend } from '../components/CollectionGrid'
 import { KNOWN_SEED_SPREAD_DAYS, NEW_PER_DAY, RAIN_UNLOCK } from '../config'
 import { newIntroducedToday } from '../srs/queue'
-import { markBandKnown } from '../srs/seed'
+import { bandWords, markBandKnown } from '../srs/seed'
 import { rainPool } from '../game/rain'
 
 interface Props {
@@ -36,18 +36,23 @@ export function HomeScreen({ corpus, onStart, onRain, onSelect, onStats }: Props
     }
   }, [])
 
+  // A square's tier is derived from the words that contain the character.
   const tiers = useMemo(() => {
+    const byWord = new Map((live?.items ?? []).map((i) => [i.w, i]))
     const map = new Map<string, Tier>()
-    for (const item of live?.items ?? []) map.set(item.c, tierFor(item))
+    for (const k of corpus.kanji) {
+      const words = corpus.wordsByKanji.get(k.c) ?? []
+      map.set(k.c, kanjiTierFrom(words.map((v) => byWord.get(v.w))))
+    }
     return map
-  }, [live?.items])
+  }, [live?.items, corpus])
 
   // Open on the band the learner is actually working in: once every N5
   // character has been met, that is N4.
   useEffect(() => {
     if (!live || bandChosen.current) return
     bandChosen.current = true
-    const n5Left = corpus.kanji.some((k) => k.jlpt === 5 && !tiers.has(k.c))
+    const n5Left = corpus.kanji.some((k) => k.jlpt === 5 && tiers.get(k.c) === 'unseen')
     if (!n5Left) setBand(4)
   }, [live, corpus, tiers])
 
@@ -61,7 +66,7 @@ export function HomeScreen({ corpus, onStart, onRain, onSelect, onStats }: Props
 
   const now = Date.now()
   const due = (live?.items ?? []).filter((i) => i.due.getTime() <= now).length
-  const unseen = corpus.kanji.length - (live?.items.length ?? 0)
+  const unseen = corpus.vocab.length - (live?.items.length ?? 0)
   const newLeft = Math.max(0, NEW_PER_DAY - (live?.introducedToday ?? 0))
   const nothingToDo = due === 0 && (newLeft === 0 || unseen === 0)
   const rainReady = live ? rainPool(corpus, live.items).length : 0
@@ -69,12 +74,13 @@ export function HomeScreen({ corpus, onStart, onRain, onSelect, onStats }: Props
 
   // Placement is offered exactly once: on a fresh install, before anything
   // has been studied. After that it lives on the stats screen.
-  const n5Unseen = corpus.kanji.filter((k) => k.jlpt === 5 && !tiers.has(k.c)).length
-  const offerPlacement = live !== undefined && live.items.length === 0 && n5Unseen > 0
+  const n5Words = useMemo(() => bandWords(corpus, 5).length, [corpus])
+  const n5Kanji = useMemo(() => corpus.kanji.filter((k) => k.jlpt === 5).length, [corpus])
+  const offerPlacement = live !== undefined && live.items.length === 0
 
   async function startAtN4() {
     const ok = confirm(
-      `Mark all ${n5Unseen} N5 characters as known?\n\nThey still come back as quick reviews over the next ${KNOWN_SEED_SPREAD_DAYS} days. Any you miss go back into learning.`,
+      `Mark the ${n5Words} words written with N5 characters as known?\n\nThey still come back as quick reviews over the next ${KNOWN_SEED_SPREAD_DAYS} days. Any you miss go back into learning.`,
     )
     if (!ok) return
     setSeeding(true)
@@ -121,8 +127,9 @@ export function HomeScreen({ corpus, onStart, onRain, onSelect, onStats }: Props
               already passed N5?
             </p>
             <p className="mt-1 text-[0.85rem] leading-snug text-ink-soft">
-              Skip being taught 日 and 一. Its {n5Unseen} characters enter as known
-              and come back as quick checks; anything you miss is relearned.
+              Skip being taught 日 and 一. The {n5Words} words written with its{' '}
+              {n5Kanji} characters enter as known and come back as quick checks;
+              anything you miss is relearned.
             </p>
             <button
               type="button"

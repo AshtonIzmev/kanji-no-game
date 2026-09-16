@@ -1,6 +1,14 @@
 /**
- * Card construction (spec §3). Three types, one pool, one scheduler, different
- * render. All the difficulty lives in the distractors.
+ * Card construction (spec §3). One pool of words, one scheduler, four renders.
+ * All the difficulty lives in the distractors.
+ *
+ *   MEANING  word    → 4 meanings      what does it mean
+ *   WHICH    meaning → 4 written words  which word (the discrimination card)
+ *   READ     word    → 4 kana readings  how is it read
+ *   LISTEN   spoken  → 4 written words  what did you hear
+ *
+ * LISTEN degrades gracefully: with no voice, or after LISTEN_REVEAL_MS, the
+ * kana is shown and the card becomes reading → written form. Still a card.
  */
 
 import type { Corpus, Kanji, Vocab } from '../data/corpus'
@@ -9,7 +17,7 @@ import type { Mode } from '../srs/scheduler'
 import { arcadeSeconds, modeFor } from '../srs/scheduler'
 import { hash, mulberry32, pickDistinct, shuffled } from '../srs/rng'
 
-export type CardKind = 'recognise' | 'discriminate' | 'read'
+export type CardKind = 'meaning' | 'which' | 'read' | 'listen'
 
 export interface Choice {
   label: string
@@ -18,47 +26,46 @@ export interface Choice {
 }
 
 export interface RenderedCard {
-  kanji: Kanji
+  word: Vocab
+  /** the word's characters, in order */
+  kanji: Kanji[]
+  /** characters no other met word contains — what the teaching panel dwells on */
+  newKanji: Kanji[]
   kind: CardKind
   mode: Mode
-  /** what fills the manuscript square */
+  /** what fills the manuscript square; for LISTEN, the kana to speak */
   prompt: string
-  promptScript: 'jp' | 'en'
-  /** small line under the prompt: the jukugo's meaning, on READ cards */
+  promptScript: 'jp' | 'en' | 'audio'
+  /** small line under the prompt, shown at feedback */
   hint?: string
   choices: Choice[]
   answer: number
   /** seconds allowed; 0 in encounter mode, which has no clock */
   seconds: number
-  /** true the very first time this character is met — it gets taught before
-   *  it is probed, where a returning item is probed first and taught after */
+  /** true the very first time this word is met — it gets taught before it is
+   *  probed, where a returning word is probed first and taught after */
   first: boolean
-  /** Mincho or Gothic — alternates per item, stable across reviews (spec §7) */
+  /** Mincho or Gothic — alternates per word, stable across reviews (spec §7) */
   face: 'mincho' | 'gothic'
-  /** the vocabulary word a READ card was built from */
-  vocab?: Vocab
 }
 
 /**
  * Mincho matches printed books, Gothic matches screens and signage. A learner
  * who only ever sees one form fails to recognise the other, so the choice is
- * fixed per item — never random, or the same kanji flickers between forms.
+ * fixed per item — never random, or the same word flickers between forms.
  */
-export function faceFor(c: string): 'mincho' | 'gothic' {
-  return hash(c) % 2 === 0 ? 'mincho' : 'gothic'
+export function faceFor(key: string): 'mincho' | 'gothic' {
+  return hash(key) % 2 === 0 ? 'mincho' : 'gothic'
 }
 
-function kindsFor(kanji: Kanji): CardKind[] {
-  const kinds: CardKind[] = ['recognise', 'discriminate']
-  if (kanji.v.length > 0) kinds.push('read')
-  return kinds
-}
+const KINDS: CardKind[] = ['meaning', 'which', 'read', 'listen']
 
-/** Rotate through the available types rather than picking at random, so every
- *  type comes round on a predictable cadence. */
-export function kindFor(kanji: Kanji, presented: number): CardKind {
-  const kinds = kindsFor(kanji)
-  return kinds[(presented + (hash(kanji.c) % kinds.length)) % kinds.length]
+/** Rotate through the types rather than picking at random, so every type
+ *  comes round on a predictable cadence. The first probe after teaching is
+ *  always MEANING — the plainest question there is. */
+export function kindFor(word: Vocab, presented: number): CardKind {
+  if (presented === 0) return 'meaning'
+  return KINDS[(presented + (hash(word.w) % KINDS.length)) % KINDS.length]
 }
 
 // --- distractor sourcing ----------------------------------------------------
@@ -94,89 +101,114 @@ export function strokeNeighbours(corpus: Corpus, kanji: Kanji, seen: Set<string>
   return [...known, ...near.filter((c) => !seen.has(c)), ...band]
 }
 
-// --- the three card types ---------------------------------------------------
+/**
+ * Words that could be mistaken for this one, best first: words sharing a
+ * character (学校 against 学生 and 高校), then words built on a visual
+ * near-twin of one of its characters (犬 against 大 and 太), then words of the
+ * same shape from the same band, then anything. The learner's own met set is
+ * preferred at each step — confusion is between things you have seen.
+ */
+export function wordPool(corpus: Corpus, word: Vocab, seenKanji: Set<string>): Vocab[] {
+  const out: Vocab[] = []
+  const taken = new Set<string>([word.w])
+  const add = (v: Vocab | undefined) => {
+    if (v && !taken.has(v.w)) {
+      taken.add(v.w)
+      out.push(v)
+    }
+  }
+  const addAll = (list: Vocab[]) => {
+    const met = list.filter((v) => v.k.every((c) => seenKanji.has(c)))
+    met.forEach(add)
+    list.forEach(add)
+  }
+
+  const chars = word.k.map((c) => corpus.byChar.get(c)).filter((k): k is Kanji => !!k)
+  for (const k of chars) addAll(corpus.wordsByKanji.get(k.c) ?? [])
+  for (const k of chars) {
+    for (const peer of [...clusterPeers(corpus, k), ...strokeNeighbours(corpus, k, seenKanji)]) {
+      addAll(corpus.wordsByKanji.get(peer) ?? [])
+    }
+  }
+  addAll(
+    corpus.vocab.filter(
+      (v) => v.jlpt === word.jlpt && v.w.length === word.w.length && v.jukugo === word.jukugo,
+    ),
+  )
+  addAll(corpus.vocab)
+  return out
+}
+
+// --- the four card types ----------------------------------------------------
 
 interface Built {
   prompt: string
-  promptScript: 'jp' | 'en'
+  promptScript: 'jp' | 'en' | 'audio'
   choices: Choice[]
   answer: number
   hint?: string
-  vocab?: Vocab
 }
 
-function buildRecognise(
-  corpus: Corpus,
-  kanji: Kanji,
-  seen: Set<string>,
-  rand: () => number,
-): Built {
-  const taken = new Set(kanji.m.map((m) => m.toLowerCase()))
-  const pool = [...clusterPeers(corpus, kanji), ...strokeNeighbours(corpus, kanji, seen)]
-    .map((c) => corpus.byChar.get(c))
-    .filter((k): k is Kanji => !!k)
-    .filter((k) => {
-      const m = k.m[0]?.toLowerCase()
-      if (!m || taken.has(m)) return false
-      taken.add(m)
-      return true
-    })
-
-  const wrong = pickDistinct(pool.slice(0, 24), 3, rand, (k) => k.m[0]).map<Choice>((k) => ({
-    label: k.m[0],
-    script: 'en',
-  }))
-  const right: Choice = { label: kanji.m[0], script: 'en' }
+function finish(right: Choice, wrong: Choice[], rand: () => number): Pick<Built, 'choices' | 'answer'> {
   const choices = shuffled([right, ...wrong], rand)
+  return { choices, answer: choices.indexOf(right) }
+}
+
+function buildMeaning(pool: Vocab[], word: Vocab, rand: () => number): Built {
+  const taken = new Set([word.m.toLowerCase()])
+  const wrong = pickDistinct(
+    pool.filter((v) => !taken.has(v.m.toLowerCase())).slice(0, 24),
+    3,
+    rand,
+    (v) => v.m.toLowerCase(),
+  ).map<Choice>((v) => ({ label: v.m, script: 'en' }))
   return {
-    prompt: kanji.c,
+    prompt: word.w,
     promptScript: 'jp',
-    choices,
-    answer: choices.indexOf(right),
+    hint: word.r,
+    ...finish({ label: word.m, script: 'en' }, wrong, rand),
   }
 }
 
-function buildDiscriminate(
-  corpus: Corpus,
-  kanji: Kanji,
-  seen: Set<string>,
-  rand: () => number,
-): Built {
-  const peers = clusterPeers(corpus, kanji)
-  const pool = peers.length >= 3 ? peers : [...peers, ...strokeNeighbours(corpus, kanji, seen)]
-  const wrong = pickDistinct(pool, 3, rand, (c) => c).map<Choice>((c) => ({
-    label: c,
-    script: 'jp',
-  }))
-  const right: Choice = { label: kanji.c, script: 'jp' }
-  const choices = shuffled([right, ...wrong], rand)
+function buildWhich(pool: Vocab[], word: Vocab, rand: () => number): Built {
+  // a word with the same gloss would be a second right answer
+  const wrong = pickDistinct(
+    pool.filter((v) => v.m.toLowerCase() !== word.m.toLowerCase()).slice(0, 24),
+    3,
+    rand,
+    (v) => v.w,
+  ).map<Choice>((v) => ({ label: v.w, script: 'jp' }))
   return {
-    prompt: kanji.m[0],
+    prompt: word.m,
     promptScript: 'en',
-    choices,
-    answer: choices.indexOf(right),
+    hint: word.r,
+    ...finish({ label: word.w, script: 'jp' }, wrong, rand),
   }
 }
 
-function buildRead(
-  corpus: Corpus,
-  kanji: Kanji,
-  rand: () => number,
-  presented: number,
-): Built {
-  // rotate through the kanji's vocabulary so the same word is not the only
-  // context this character is ever met in
-  const vocab = corpus.vocab[kanji.v[presented % kanji.v.length]]
-  const wrong = vocab.d.slice(0, 3).map<Choice>((r) => ({ label: r, script: 'jp' }))
-  const right: Choice = { label: vocab.r, script: 'jp' }
-  const choices = shuffled([right, ...wrong], rand)
+function buildRead(word: Vocab, rand: () => number): Built {
+  const wrong = word.d.slice(0, 3).map<Choice>((r) => ({ label: r, script: 'jp' }))
   return {
-    prompt: vocab.w,
+    prompt: word.w,
     promptScript: 'jp',
-    hint: vocab.m,
-    choices,
-    answer: choices.indexOf(right),
-    vocab,
+    hint: word.m,
+    ...finish({ label: word.r, script: 'jp' }, wrong, rand),
+  }
+}
+
+function buildListen(pool: Vocab[], word: Vocab, rand: () => number): Built {
+  // a homophone would be a second right answer (火 and 日 are both ひ)
+  const wrong = pickDistinct(
+    pool.filter((v) => v.r !== word.r).slice(0, 24),
+    3,
+    rand,
+    (v) => v.w,
+  ).map<Choice>((v) => ({ label: v.w, script: 'jp' }))
+  return {
+    prompt: word.r,
+    promptScript: 'audio',
+    hint: word.m,
+    ...finish({ label: word.w, script: 'jp' }, wrong, rand),
   }
 }
 
@@ -184,39 +216,46 @@ function buildRead(
 
 export function buildCard(
   corpus: Corpus,
-  kanji: Kanji,
+  word: Vocab,
   item: ItemRow | undefined,
-  seen: Set<string>,
+  seenKanji: Set<string>,
 ): RenderedCard {
   const presented = item?.presented ?? 0
   const mode = item ? modeFor(item) : 'encounter'
-  const kind = kindFor(kanji, presented)
-  // seeded by item and review count: reproducible, but never the same layout
+  const kind = kindFor(word, presented)
+  // seeded by word and review count: reproducible, but never the same layout
   // twice in a row
-  const rand = mulberry32(hash(kanji.c + ':' + presented + ':' + kind))
+  const rand = mulberry32(hash(word.w + ':' + presented + ':' + kind))
+  const pool = wordPool(corpus, word, seenKanji)
 
   const built =
-    kind === 'recognise'
-      ? buildRecognise(corpus, kanji, seen, rand)
-      : kind === 'discriminate'
-        ? buildDiscriminate(corpus, kanji, seen, rand)
-        : buildRead(corpus, kanji, rand, presented)
+    kind === 'meaning'
+      ? buildMeaning(pool, word, rand)
+      : kind === 'which'
+        ? buildWhich(pool, word, rand)
+        : kind === 'read'
+          ? buildRead(word, rand)
+          : buildListen(pool, word, rand)
 
   // A card is always four choices. Nothing above can realistically come up
   // short, but a three-choice card would silently make the item easier, which
   // would quietly corrupt the scheduler's difficulty estimate.
   const choices = built.choices.slice()
   const used = new Set(choices.map((ch) => ch.label))
-  for (const k of corpus.kanji) {
+  const script = built.choices[0].script
+  for (const v of corpus.vocab) {
     if (choices.length >= 4) break
-    const label = built.choices[0].script === 'en' ? k.m[0] : k.c
+    const label = kind === 'meaning' ? v.m : kind === 'read' ? v.r : v.w
     if (!label || used.has(label)) continue
     used.add(label)
-    choices.push({ label, script: built.choices[0].script })
+    choices.push({ label, script })
   }
 
+  const kanji = word.k.map((c) => corpus.byChar.get(c)).filter((k): k is Kanji => !!k)
   return {
+    word,
     kanji,
+    newKanji: kanji.filter((k) => !seenKanji.has(k.c)),
     kind,
     mode,
     prompt: built.prompt,
@@ -226,7 +265,6 @@ export function buildCard(
     answer: built.answer,
     seconds: mode === 'arcade' ? arcadeSeconds(item?.stability ?? 0) : 0,
     first: presented === 0,
-    face: faceFor(kanji.c),
-    vocab: built.vocab,
+    face: faceFor(word.w),
   }
 }
