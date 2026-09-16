@@ -58,13 +58,13 @@ at all, as directed.
 
 ```
 kanji in corpus (N5+N4)        245        N5 79 · N4 166
-vocabulary words kept          715        (351 jukugo)
+vocabulary words kept          420        (183 jukugo)
 confusion clusters kept         74
 
 RECOGNISE constructible         245 / 245  (100.0%)
 DISCRIMINATE w/ real cluster    144 / 245  ( 58.8%)   rest → stroke-count ±1 fallback
 READ constructible              243 / 245  ( 99.2%)
-  of which with a jukugo        213 / 245  ( 86.9%)
+  of which with a jukugo        174 / 245  ( 71.0%)
 ENCOUNTER w/ decomposition      170 / 245  ( 69.4%)
 
 TOTAL  152.6 KB raw / 39.9 KB gzip        (budget: 800 KB)
@@ -73,6 +73,18 @@ TOTAL  152.6 KB raw / 39.9 KB gzip        (budget: 800 KB)
 Go. The 30% of characters with no decomposition are the pictographs — 日 山 川
 have no components, and inventing some would be a lie. They get the etymology
 strip instead (below).
+
+The vocabulary is N5 and N4 words only. The source lists also carry an N3
+sheet; it is used as a fallback for exactly the characters no N5/N4 word on the
+list happens to cover (不 京 公 友 田 野) plus 日本, which sits on the N3 sheet
+for no reason an N5 learner would accept. Before this rule 42% of the READ deck
+was N3 words like 特長 and 重なる. Words with the iteration mark (人々) are
+dropped: that is a rendaku exercise, not a kanji reading.
+
+One data bug worth recording so it does not come back: the loader stripped a
+trailing な/だ from readings to normalise na-adjectives, and every row it
+touched was a plain noun — 大人 shipped as おと, 女 as おん, 魚 as さか, 花 as は,
+体 as から. Only する/します are stripped now.
 
 READ distractors are generated three ways, best first: the word's own kanji read
 the wrong way (学校 → がくこう), a phonetic near-miss (rendaku, gemination, vowel
@@ -156,6 +168,49 @@ same way "built from" already doesn't.
 The subset is renamed `KNG Seal Subset` because LXGW Seal carries Reserved Font
 Names under OFL 1.1 §4 and subsetting is a modification.
 
+### Placement — "I know N5"
+
+The teaching order is N5 first, fifteen a day, hard. For someone who already
+passed N5 that is six sessions of being taught 日 and 一 before the first N4
+character appears, and the seven-day gate below would then blame the design for
+what was the onboarding.
+
+So a fresh install offers, once, to mark N5 as known (the same button lives on
+the stats screen afterwards). "Known" is a claim, and it is recorded as FSRS
+state rather than as a skip: the 79 characters enter as Review items at
+`KNOWN_SEED_STABILITY_DAYS` (10) with their first review spread over the next
+`KNOWN_SEED_SPREAD_DAYS` (10), so tomorrow is not a 79-review day. Each is then
+drilled once in arcade; a miss drops it into relearning like any other lapse.
+Nothing is trusted, nothing is taught twice. New characters come from N4 from
+the first session, and kanji rain (below) is unlocked immediately.
+
+### 雨 — kanji rain
+
+A DISCRIMINATE card with the choices falling. The English meaning sits along the
+bottom edge, where the thumb already is; four characters descend in four lanes;
+tap the one it names before it reaches the ground. A wrong tap or a landing
+costs one of three lives. The fall takes 7 seconds on wave 1 and 3 seconds by
+wave 30 — the session's arcade clock is a bar that shrinks, here the clock is
+the character getting closer.
+
+Two rules keep it honest:
+
+- **It never teaches.** Only characters already in arcade state fall
+  (`modeFor(item) === 'arcade'`), and the mode is locked until eight of them
+  exist. The etymology strip and every other teaching aid stay out for the same
+  reason they stay off graded prompts.
+- **Every wave is one real review.** The target is graded through the same
+  `gradeFor('arcade', …)` rule as a session card — Easy if caught in the top
+  40% of the field, Hard below 80%, Again on a miss — and written to the same
+  FSRS row. A run is planned due-first, then longest-unreviewed, so it clears
+  the review queue rather than re-drilling yesterday's characters. Runs are
+  capped at 40 waves. Rain scores are kept apart from arcade sessions so the
+  ghost run is not polluted.
+
+Logic lives in `src/game/rain.ts` with no React in it; `RainScreen.tsx` only
+draws it. `scripts/smoke-rain.mjs` takes the placement offer, plays a few waves,
+lets one land, throws the rest, and dumps what was written to IndexedDB.
+
 ### Retention (§5)
 
 Collection sheet as home, four mastery tiers straight off FSRS stability, a
@@ -191,6 +246,7 @@ scripts/
   build_icons.py      → public/icon*.{svg,png}
   smoke.mjs           walk a session in an iPhone viewport, screenshot each state
   smoke-arcade.mjs    same, with mature FSRS state seeded so arcade is reachable
+  smoke-rain.mjs      placement offer → kanji rain → run summary
 data/clusters.json    hand-curated visual confusion sets — do not generate these
 data/etymology/       drop-in ancient-form SVGs (see its README)
 src/
@@ -199,10 +255,12 @@ src/
   db/db.ts            Dexie schema, day keys, export/import
   srs/scheduler.ts    FSRS, mode routing, tiers, arcade clock, grading
   srs/queue.ts        due reviews + capped new items
+  srs/seed.ts         placement: mark a band as known, as FSRS state
+  game/rain.ts        雨 — waves, drops, planning, scoring; no React
   cards/build.ts      the three card types and their distractors
   session/useSession  queue, grading, persistence, score
   components/         GenkoCell · ChoiceGrid · CollectionGrid · EtymologyStrip
-  screens/            Home · Session · Encounter · Summary · KanjiSheet · Stats
+  screens/            Home · Session · Encounter · Summary · KanjiSheet · Stats · Rain
 ```
 
 The smoke scripts need Playwright (`npm i -D playwright`); they are a way to

@@ -64,7 +64,7 @@ export function kindFor(kanji: Kanji, presented: number): CardKind {
 // --- distractor sourcing ----------------------------------------------------
 
 /** Cluster peers first — visual near-twins are the whole point (spec §3). */
-function clusterPeers(corpus: Corpus, kanji: Kanji): string[] {
+export function clusterPeers(corpus: Corpus, kanji: Kanji): string[] {
   const out: string[] = []
   for (const idx of kanji.cl) {
     for (const c of corpus.clusters[idx]) {
@@ -79,7 +79,7 @@ function clusterPeers(corpus: Corpus, kanji: Kanji): string[] {
  * learner's already-seen set. Falling back further to the same JLPT band keeps
  * a card constructible on day one, when nothing has been seen yet.
  */
-function strokeNeighbours(corpus: Corpus, kanji: Kanji, seen: Set<string>): string[] {
+export function strokeNeighbours(corpus: Corpus, kanji: Kanji, seen: Set<string>): string[] {
   const near: string[] = []
   for (const delta of [0, -1, 1]) {
     for (const c of corpus.byStrokes.get(kanji.strokes + delta) ?? []) {

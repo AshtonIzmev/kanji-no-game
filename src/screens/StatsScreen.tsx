@@ -6,12 +6,14 @@
 
 import { useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import type { Corpus } from '../data/corpus'
 import { db, dayKey, exportState, getMeta, importState } from '../db/db'
 import { tierFor, type Tier } from '../srs/scheduler'
-import { NEW_PER_DAY } from '../config'
+import { KNOWN_SEED_SPREAD_DAYS, NEW_PER_DAY } from '../config'
 import { newIntroducedToday } from '../srs/queue'
+import { markBandKnown } from '../srs/seed'
 
-export function StatsScreen({ onClose }: { onClose: () => void }) {
+export function StatsScreen({ corpus, onClose }: { corpus: Corpus; onClose: () => void }) {
   const [busy, setBusy] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -21,8 +23,12 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
     const reviews = await db.reviews.count()
     const counts: Record<Tier, number> = { unseen: 0, learning: 0, solid: 0, burned: 0 }
     for (const i of items) counts[tierFor(i)]++
+    const have = new Set(items.map((i) => i.c))
     const now = Date.now()
     return {
+      n5Unseen: corpus.kanji.filter((k) => k.jlpt === 5 && !have.has(k.c)).length,
+      rainBest: await getMeta<number>('rain:best', 0),
+      rainRuns: await getMeta<number>('rain:runs', 0),
       counts,
       reviews,
       sessions,
@@ -32,7 +38,18 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
       introducedToday: await newIntroducedToday(),
       bestScore: (await db.sessions.orderBy('score').last())?.score ?? 0,
     }
-  }, [])
+  }, [corpus])
+
+  async function markN5Known() {
+    const n = data?.n5Unseen ?? 0
+    const ok = confirm(
+      `Mark the ${n} unseen N5 characters as known?\n\nThey come back as quick reviews over the next ${KNOWN_SEED_SPREAD_DAYS} days. Any you miss go back into learning.`,
+    )
+    if (!ok) return
+    setBusy('seed')
+    await markBandKnown(corpus, 5)
+    setBusy(null)
+  }
 
   async function doExport() {
     setBusy('export')
@@ -81,6 +98,12 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
         <Stat label="reviews all time" value={`${data?.reviews ?? 0}`} />
         <Stat label="solid" value={`${data?.counts.solid ?? 0}`} />
         <Stat label="burned" value={`${data?.counts.burned ?? 0}`} />
+        <Stat label="arcade best" value={`${data?.bestScore ?? 0}`} />
+        <Stat
+          label="rain best"
+          value={`${data?.rainBest ?? 0}`}
+          sub={data?.rainRuns ? `${data.rainRuns} runs` : undefined}
+        />
       </dl>
 
       <section>
@@ -106,6 +129,27 @@ export function StatsScreen({ onClose }: { onClose: () => void }) {
       </section>
 
       <section className="mt-auto space-y-2 border-t border-rule pt-4">
+        <h3 className="font-mono text-[0.65rem] tracking-widest text-ink-faint uppercase">
+          placement
+        </h3>
+        <p className="text-[0.8rem] leading-snug text-ink-soft">
+          {data?.n5Unseen
+            ? `${data.n5Unseen} N5 characters have not been met yet. If you already know them, skip the teaching: they enter as known and are checked in arcade over the next ${KNOWN_SEED_SPREAD_DAYS} days.`
+            : 'Every N5 character has been met. New characters now come from N4.'}
+        </p>
+        {!!data?.n5Unseen && (
+          <button
+            type="button"
+            onClick={() => void markN5Known()}
+            disabled={busy !== null}
+            className="w-full rounded-[3px] border border-rule bg-paper py-3 font-mono text-xs tracking-widest text-ink uppercase disabled:text-ink-faint"
+          >
+            {busy === 'seed' ? 'marking…' : 'mark N5 as known'}
+          </button>
+        )}
+      </section>
+
+      <section className="space-y-2 border-t border-rule pt-4">
         <h3 className="font-mono text-[0.65rem] tracking-widest text-ink-faint uppercase">
           this phone holds the only copy
         </h3>

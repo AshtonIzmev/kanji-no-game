@@ -181,6 +181,16 @@ def load_ids():
     return out
 
 
+# One word, two readings in the source: the first row wins below, so say which.
+READING_PREFERENCE = {
+    "日本": "にほん",
+}
+
+# Words the N5 list omits (they sit on the N3 sheet) that every N5 learner
+# already knows. Kept regardless of the N3-as-fallback rule.
+ALWAYS_KEEP = {"日本"}
+
+
 def load_vocab_rows():
     rows = []
     for level in (5, 4, 3):
@@ -196,11 +206,18 @@ def load_vocab_rows():
                     continue
                 # The JLPT lists gloss suru-verbs as 運動 / うんどうする. The
                 # reading must match the written form or the card is a lie.
-                for suffix in ("する", "します", "だ", "な"):
+                # Only する/します: an earlier version also stripped な/だ for
+                # na-adjectives, which turned 大人 into おと, 女 into おん and
+                # 魚 into さか — every such row in the source is a plain noun.
+                for suffix in ("する", "します"):
                     if read.endswith(suffix) and not expr.endswith(suffix):
                         read = read[: -len(suffix)]
                         break
                 if not read:
+                    continue
+                # Where the source lists two readings for one word, keep the
+                # one the N5 textbooks teach.
+                if READING_PREFERENCE.get(expr, read) != read:
                     continue
                 rows.append({"w": expr, "r": read, "m": mean, "jlpt": level})
     return rows
@@ -433,6 +450,16 @@ def main():
         if any(c not in corpus for c in chars):
             continue
         if not KANA_RE.match(row["r"]):
+            continue
+        # The learner is working towards N4. N3 vocabulary is a fallback for
+        # the handful of characters (不 京 公 友 田 野) that no N5/N4 word on the
+        # list happens to cover — never the default READ prompt. Rows arrive
+        # N5, N4, N3, so by now vocab_of holds every level-appropriate word.
+        if row["jlpt"] == 3 and word not in ALWAYS_KEEP and all(vocab_of.get(c) for c in targets):
+            continue
+        # 人々 / 色々: the iteration mark is a rendaku exercise, not a kanji
+        # reading, and it is outside the subsetted fonts.
+        if "々" in word:
             continue
         seen_words.add(word)
         d = reading_distractors(word, row["r"], kanji_src, pool_by_len)
